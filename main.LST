@@ -1,0 +1,362 @@
+C51 COMPILER V9.51   MAIN                                                                  05/14/2018 09:39:59 PAGE 1   
+
+
+C51 COMPILER V9.51, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN main.OBJ
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE main.c BROWSE DEBUG OBJECTEXTEND TABS(2)
+
+line level    source
+
+   1          #include "main.h"
+   2          #include "LCD12864.h"
+   3          #include "HX711.h"
+   4          #include <stdio.h>  
+   5          
+   6          #define uchar unsigned char 
+   7          #define uint  unsigned int
+   8           sbit c_send   = P3^6;    //超声波发射
+   9          sbit c_recive = P3^7;   //超声波接收
+  10          uchar flag_hc_value;        //超声波中间变量
+  11          
+  12          
+  13          unsigned int distance;          //距离
+  14          uint set_d;             //距离
+  15          bit flag_csb_juli;        //超声波超出量程
+  16          uint  flag_time0;     //用来保存定时器0的时候的
+  17          
+  18          unsigned long HX711_Buffer = 0;
+  19          unsigned long Weight_Maopi = 0;
+  20          unsigned int Weight_Shiwu = 0;
+  21          
+  22          void delay()
+  23          {
+  24   1        _nop_();               //执行一条_nop_()指令就是1us
+  25   1        _nop_(); 
+  26   1        _nop_(); 
+  27   1        _nop_(); 
+  28   1        _nop_(); 
+  29   1        _nop_(); 
+  30   1        _nop_();  
+  31   1      }
+  32          
+  33          /*********************定时器0、定时器1初始化******************/
+  34          void time_init()    
+  35          {
+  36   1        EA  = 1;      //开总中断
+  37   1        TMOD = 0X01;    //定时器0、定时器1工作方式1
+  38   1        ET0 = 1;      //开定时器0中断 
+  39   1        TR0 = 1;      //允许定时器0定时
+  40   1      //  ET1 = 1;      //开定时器1中断 
+  41   1      //  TR1 = 1;      //允许定时器1定时 
+  42   1      //串口的初始化
+  43   1      TMOD |=0x20;
+  44   1      TH1=0xFD;
+  45   1      TL1=0xFD;
+  46   1      SCON=0x50;
+  47   1      ES=1;
+  48   1      TI=0;
+  49   1      RI=0; 
+  50   1      TR1=1;
+  51   1        
+  52   1        
+  53   1          
+  54   1            
+  55   1      }
+C51 COMPILER V9.51   MAIN                                                                  05/14/2018 09:39:59 PAGE 2   
+
+  56          
+  57          
+  58          /*********************串口发送程序*****************************/
+  59            unsigned char str_send_buff[10];
+  60          unsigned char receive_buff[10];
+  61          void send_str(unsigned char *s)
+  62          {
+  63   1        ES=0;
+  64   1        if(*s=='\0')
+  65   1        {
+  66   2            return;
+  67   2        }
+  68   1        else 
+  69   1        {
+  70   2          while(*s!=0){
+  71   3            SBUF=*s;
+  72   3            while(TI==0);
+  73   3            TI=0;
+  74   3            s++;    
+  75   3        }
+  76   2        ES=1;
+  77   2        
+  78   2      }
+  79   1      return;
+  80   1      }
+  81          
+  82          void send_char(unsigned char c)
+  83          {
+  84   1          ES=0;
+  85   1          SBUF=c;
+  86   1          while(TI==0);
+  87   1          TI=0;
+  88   1          ES=1;
+  89   1          return;
+  90   1      }
+  91          //接受
+  92          unsigned char i;
+  93          unsigned int count;
+  94          void rsint() interrupt 4 using 0
+  95          {   
+  96   1          i=0;
+  97   1          count=0;
+  98   1          receive_buff[i]=SBUF;
+  99   1          RI=0;
+ 100   1        loop:
+ 101   1          i++;
+ 102   1          while(!RI){
+ 103   2              count++;
+ 104   2              if(count>130){
+ 105   3                receive_buff[i]='\0';
+ 106   3                send_str(receive_buff);
+ 107   3                return ;
+ 108   3              }
+ 109   2            receive_buff[i]=SBUF;
+ 110   2          }
+ 111   1          RI=0;
+ 112   1          count=0;
+ 113   1          goto loop;
+ 114   1      }
+ 115          
+ 116          
+ 117          /*********************超声波测距程序*****************************/
+C51 COMPILER V9.51   MAIN                                                                  05/14/2018 09:39:59 PAGE 3   
+
+ 118          void send_wave()
+ 119          {
+ 120   1         EA=1;
+ 121   1        c_send = 1;              //10us的高电平触发 
+ 122   1        delay();
+ 123   1        c_send = 0;  
+ 124   1        TH0 = 0;              //给定时器0清零
+ 125   1        TL0 = 0;
+ 126   1        TR0 = 0;          //关定时器0定时
+ 127   1        flag_hc_value = 0;
+ 128   1        while(!c_recive);     //当c_recive为零时等待
+ 129   1        TR0=1;
+ 130   1        while(c_recive)         //当c_recive为1计数并等待
+ 131   1        {
+ 132   2          flag_time0 = TH0 * 256 + TL0;
+ 133   2          if((flag_hc_value > 1) || (flag_time0 > 65000))      //当超声波超过测量范围时，显示3个888
+ 134   2          {
+ 135   3            TR0 = 0;
+ 136   3            flag_csb_juli = 2;
+ 137   3            distance = 777;
+ 138   3            flag_hc_value = 0;
+ 139   3            break ;   
+ 140   3          }
+ 141   2          else 
+ 142   2          {
+ 143   3            flag_csb_juli = 1;  
+ 144   3          }
+ 145   2        }
+ 146   1        if(flag_csb_juli == 1)
+ 147   1        { 
+ 148   2          TR0=0;               //关定时器0定时
+ 149   2        //  distance = TH0;            //读出定时器0的时间
+ 150   2          distance = TH0 * 256 + TL0;
+ 151   2          distance +=( flag_hc_value * 65536);//算出超声波测距的时间   得到单位是ms
+ 152   2          distance *= 0.017;               // 0.017 = 340M / 2 = 170M = 0.017M 算出来是米
+ 153   2          if(distance > 300)         //距离 = 速度 * 时间
+ 154   2          { 
+ 155   3            distance = 888;        //如果大于4.0m就超出超声波的量程 
+ 156   3          }
+ 157   2        } 
+ 158   1        EA=0; 
+ 159   1      }
+ 160          
+ 161          
+ 162          
+ 163          float weight_reg;
+ 164          int k=0;
+ 165          //****************************************************
+ 166          //主函数
+ 167          //****************************************************
+ 168          void main()
+ 169          { 
+ 170   1        
+ 171   1        
+ 172   1        time_init();
+ 173   1        send_wave();
+ 174   1        LCD12864_Reset();               //初始化液晶
+ 175   1        LCD12864_HAIZI_SET();             //设置为普通模式
+ 176   1      
+ 177   1        LCD12864_NoWaitIdle_COM_Write(0x80);            //指针设置
+ 178   1        LCD12864_write_word("※※※※※※※※");
+ 179   1        LCD12864_NoWaitIdle_COM_Write(0x90);            //指针设置
+C51 COMPILER V9.51   MAIN                                                                  05/14/2018 09:39:59 PAGE 4   
+
+ 180   1        LCD12864_write_word("※※欢迎使用※※");      
+ 181   1        LCD12864_NoWaitIdle_COM_Write(0x88);            //指针设置
+ 182   1        LCD12864_write_word("身高体重测量仪器");
+ 183   1        LCD12864_NoWaitIdle_COM_Write(0x98);            //指针设置
+ 184   1        LCD12864_write_word("※※※※※※※※");
+ 185   1              
+ 186   1        Delay_ms(1000);    //延时1s,等待传感器稳定
+ 187   1      
+ 188   1        Get_Maopi();        //称毛皮重量
+ 189   1        LCD12864_NoWaitIdle_COM_Write(0x01);      //清空
+ 190   1      
+ 191   1        while(1)
+ 192   1        {
+ 193   2            send_wave();
+ 194   2          Get_Weight();     //称重
+ 195   2          LCD12864_NoWaitIdle_COM_Write(0x80);            //指针设置
+ 196   2          LCD12864_write_word("※※欢迎使用※※");
+ 197   2          LCD12864_NoWaitIdle_COM_Write(0x90);
+ 198   2          LCD12864_write_word("身高体重测量仪器");
+ 199   2          //显示当前重量
+ 200   2          LCD12864_NoWaitIdle_COM_Write(0x88);
+ 201   2          LCD12864_write_word("身高：");
+ 202   2          
+ 203   2          LCD12864_Data_Write(' ');
+ 204   2          LCD12864_Data_Write(' ');
+ 205   2          LCD12864_Data_Write(' ');
+ 206   2          LCD12864_Data_Write(distance%1000/100 + 0x30);
+ 207   2          LCD12864_Data_Write('.');
+ 208   2          LCD12864_Data_Write(distance%100/10 + 0x30);
+ 209   2          LCD12864_Data_Write(distance%10 + 0x30);
+ 210   2            LCD12864_write_word(" m ");
+ 211   2          LCD12864_NoWaitIdle_COM_Write(0x98);
+ 212   2          LCD12864_write_word("体重：");
+ 213   2          if( Weight_Shiwu/10000 != 0)
+ 214   2          {
+ 215   3            LCD12864_Data_Write(Weight_Shiwu/100000 + 0x30);
+ 216   3          }
+ 217   2          else
+ 218   2          {
+ 219   3            LCD12864_Data_Write(' '); 
+ 220   3          }
+ 221   2          LCD12864_Data_Write(Weight_Shiwu%100000/10000 + 0x30);
+ 222   2          LCD12864_Data_Write(Weight_Shiwu%10000/1000 + 0x30);
+ 223   2          LCD12864_Data_Write(Weight_Shiwu%1000/100 + 0x30);
+ 224   2          LCD12864_Data_Write('.');
+ 225   2          LCD12864_Data_Write(Weight_Shiwu%100/10 + 0x30);
+ 226   2          LCD12864_Data_Write(Weight_Shiwu%10 + 0x30);
+ 227   2          LCD12864_write_word(" Kg ");
+ 228   2          Delay_ms(1000);
+ 229   2          
+ 230   2          if(Weight_Shiwu!=weight_reg){
+ 231   3          weight_reg=Weight_Shiwu;  
+ 232   3          sprintf(str_send_buff,"%f",(float)(distance)/100);
+ 233   3          while(str_send_buff[k]!='.')
+ 234   3          {
+ 235   4            k++;
+ 236   4          }
+ 237   3          str_send_buff[k+3]='\0';
+ 238   3          k=0;
+ 239   3          send_str("HIGHT IS:");
+ 240   3          send_str(str_send_buff);
+ 241   3          send_str(" m");
+C51 COMPILER V9.51   MAIN                                                                  05/14/2018 09:39:59 PAGE 5   
+
+ 242   3          send_str("\n");
+ 243   3          sprintf(str_send_buff,"%f",(float)(Weight_Shiwu)/100);
+ 244   3          while(str_send_buff[k]!='.')
+ 245   3          {
+ 246   4            k++;
+ 247   4          }
+ 248   3          str_send_buff[k+3]='\0';
+ 249   3          k=0;
+ 250   3          send_str("WEIGHT IS:");
+ 251   3          send_str(str_send_buff);
+ 252   3          send_str(" Kg");
+ 253   3          send_str("\n");
+ 254   3          }
+ 255   2        }
+ 256   1      }
+ 257          
+ 258          //****************************************************
+ 259          //称重
+ 260          //****************************************************
+ 261          void Get_Weight()
+ 262          {
+ 263   1        HX711_Buffer = HX711_Read();
+ 264   1        HX711_Buffer = HX711_Buffer/100;
+ 265   1        if(HX711_Buffer > Weight_Maopi)     
+ 266   1        {
+ 267   2          Weight_Shiwu = HX711_Buffer;
+ 268   2          Weight_Shiwu = Weight_Shiwu - Weight_Maopi;       //获取实物的AD采样数值。
+ 269   2        
+ 270   2          Weight_Shiwu = (unsigned long)((float)Weight_Shiwu/4.00+0.05);  //计算实物的实际重量
+ 271   2                                          //因为不同的传感器特性曲线不一样，因此，每一个传感器需要矫正这里的2.15这个除数。
+ 272   2                                          //当发现测试出来的重量偏大时，增加该数值。
+ 273   2                                          //如果测试出来的重量偏小时，减小改数值。
+ 274   2                                          //该数值一般在2.15附近调整之间。因传感器不同而定。
+ 275   2                                          //+0.05是为了四舍五入百分位
+ 276   2          
+ 277   2          if(  Weight_Shiwu > 100000 )
+ 278   2          {
+ 279   3            Buzzer = 0;       //打开警报  
+ 280   3          }
+ 281   2          else
+ 282   2          {
+ 283   3            Buzzer = 1;       //关闭警报
+ 284   3          }
+ 285   2        }
+ 286   1        else if(HX711_Buffer < Weight_Maopi - 30)
+ 287   1        {
+ 288   2          Buzzer = 0;       //负重量报警
+ 289   2        }
+ 290   1      
+ 291   1      }
+ 292          
+ 293          //****************************************************
+ 294          //获取毛皮重量
+ 295          //****************************************************
+ 296          void Get_Maopi()
+ 297          {
+ 298   1        unsigned char i = 0;
+ 299   1        unsigned int Temp_Weight = 0;
+ 300   1      
+ 301   1        Weight_Maopi = 0;
+ 302   1      
+ 303   1        for( i = 0 ; i < 10 ; i++)
+C51 COMPILER V9.51   MAIN                                                                  05/14/2018 09:39:59 PAGE 6   
+
+ 304   1        {
+ 305   2          HX711_Buffer = HX711_Read();
+ 306   2          Temp_Weight = HX711_Buffer/100;
+ 307   2      
+ 308   2          if( Temp_Weight > Weight_Maopi)
+ 309   2          {
+ 310   3            Weight_Maopi = Temp_Weight;   
+ 311   3          }
+ 312   2        }   
+ 313   1      } 
+ 314          
+ 315          //****************************************************
+ 316          //MS延时函数(12M晶振下测试)
+ 317          //****************************************************
+ 318          void Delay_ms(unsigned int n)
+ 319          {
+ 320   1        unsigned int  i,j;
+ 321   1        for(i=0;i<n;i++)
+ 322   1          for(j=0;j<123;j++);
+ 323   1      }
+ 324          
+ 325          /*********************定时器0中断服务程序 用做超声波测距的************************/
+ 326          void time0_int() interrupt 1  
+ 327          {              
+ 328   1        flag_hc_value ++;    // TH0 TL0 到65536后溢出中断
+ 329   1      }     
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1351    ----
+   CONSTANT SIZE    =    107    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     46       1
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      1    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
